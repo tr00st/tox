@@ -4,379 +4,31 @@ Python2 and Python3 based virtual environments. Environments are
 setup by using virtualenv. Configuration is generally done through an
 INI-style "tox.ini" file.
 """
-from __future__ import print_function
+from __future__ import print_function, unicode_literals
 
 import os
-import pipes
 import re
 import shutil
 import subprocess
 import sys
-import time
 from contextlib import contextmanager
 
 import pkg_resources
 import py
 
-import tox
-from tox.config import parseconfig
-from tox.result import ResultLog
-from tox.util import set_os_env_var
-from tox.venv import VirtualEnv
+from tox import __version__
+from tox.action import Action
+from tox.exception import (
+    ConfigError,
+    InterpreterNotFound,
+    InvocationError,
+    MissingDependency,
+    MissingDirectory,
+)
+from tox.reporter import Reporter, Verbosity
 
-
-def prepare(args):
-    config = parseconfig(args)
-    if config.option.help:
-        show_help(config)
-        raise SystemExit(0)
-    elif config.option.helpini:
-        show_help_ini(config)
-        raise SystemExit(0)
-    return config
-
-
-def cmdline(args=None):
-    if args is None:
-        args = sys.argv[1:]
-    main(args)
-
-
-def main(args):
-    try:
-        config = prepare(args)
-        with set_os_env_var("TOX_WORK_DIR", config.toxworkdir):
-            retcode = build_session(config).runcommand()
-        if retcode is None:
-            retcode = 0
-        raise SystemExit(retcode)
-    except KeyboardInterrupt:
-        raise SystemExit(2)
-    except (tox.exception.MinVersionError, tox.exception.MissingRequirement) as e:
-        r = Reporter(None)
-        r.error(str(e))
-        raise SystemExit(1)
-
-
-def build_session(config):
-    return Session(config)
-
-
-def show_help(config):
-    tw = py.io.TerminalWriter()
-    tw.write(config._parser._format_help())
-    tw.line()
-    tw.line("Environment variables", bold=True)
-    tw.line("TOXENV: comma separated list of environments (overridable by '-e')")
-    tw.line("TOX_SKIP_ENV: regular expression to filter down from running tox environments")
-    tw.line(
-        "TOX_TESTENV_PASSENV: space-separated list of extra environment variables to be "
-        "passed into test command environments"
-    )
-    tw.line("PY_COLORS: 0 disable colorized output, 1 enable (default)")
-
-
-def show_help_ini(config):
-    tw = py.io.TerminalWriter()
-    tw.sep("-", "per-testenv attributes")
-    for env_attr in config._testenv_attr:
-        tw.line(
-            "{:<15} {:<8} default: {}".format(
-                env_attr.name, "<{}>".format(env_attr.type), env_attr.default
-            ),
-            bold=True,
-        )
-        tw.line(env_attr.help)
-        tw.line()
-
-
-class Action(object):
-    def __init__(self, session, venv, msg, args):
-        self.venv = venv
-        self.msg = msg
-        self.activity = msg.split(" ", 1)[0]
-        self.session = session
-        self.report = session.report
-        self.args = args
-        self.id = venv and venv.envconfig.envname or "tox"
-        self._popenlist = []
-        if self.venv:
-            self.venvname = self.venv.name
-        else:
-            self.venvname = "GLOB"
-        if msg == "runtests":
-            cat = "test"
-        else:
-            cat = "setup"
-        envlog = session.resultlog.get_envlog(self.venvname)
-        self.commandlog = envlog.get_commandlog(cat)
-
-    def __enter__(self):
-        self.report.logaction_start(self)
-        return self
-
-    def __exit__(self, *args):
-        self.report.logaction_finish(self)
-
-    def setactivity(self, name, msg):
-        self.activity = name
-        if msg:
-            self.report.verbosity0("{} {}: {}".format(self.venvname, name, msg), bold=True)
-        else:
-            self.report.verbosity1("{} {}: {}".format(self.venvname, name, msg), bold=True)
-
-    def info(self, name, msg):
-        self.report.verbosity1("{} {}: {}".format(self.venvname, name, msg), bold=True)
-
-    def _initlogpath(self, actionid):
-        if self.venv:
-            logdir = self.venv.envconfig.envlogdir
-        else:
-            logdir = self.session.config.logdir
-        try:
-            log_count = len(logdir.listdir("{}-*".format(actionid)))
-        except (py.error.ENOENT, py.error.ENOTDIR):
-            logdir.ensure(dir=1)
-            log_count = 0
-        path = logdir.join("{}-{}.log".format(actionid, log_count))
-        f = path.open("w")
-        f.flush()
-        return f
-
-    def popen(
-        self,
-        args,
-        cwd=None,
-        env=None,
-        redirect=True,
-        returnout=False,
-        ignore_ret=False,
-        capture_err=True,
-    ):
-        stdout = outpath = None
-        resultjson = self.session.config.option.resultjson
-
-        stderr = subprocess.STDOUT if capture_err else None
-
-        cmd_args = [str(x) for x in args]
-        cmd_args_shell = " ".join(pipes.quote(i) for i in cmd_args)
-        if resultjson or redirect:
-            fout = self._initlogpath(self.id)
-            fout.write(
-                "actionid: {}\nmsg: {}\ncmdargs: {!r}\n\n".format(
-                    self.id, self.msg, cmd_args_shell
-                )
-            )
-            fout.flush()
-            outpath = py.path.local(fout.name)
-            fin = outpath.open("rb")
-            fin.read()  # read the header, so it won't be written to stdout
-            stdout = fout
-        elif returnout:
-            stdout = subprocess.PIPE
-        if cwd is None:
-            # FIXME XXX cwd = self.session.config.cwd
-            cwd = py.path.local()
-        try:
-            popen = self._popen(args, cwd, env=env, stdout=stdout, stderr=stderr)
-        except OSError as e:
-            self.report.error(
-                "invocation failed (errno {:d}), args: {}, cwd: {}".format(
-                    e.errno, cmd_args_shell, cwd
-                )
-            )
-            raise
-        popen.outpath = outpath
-        popen.args = cmd_args
-        popen.cwd = cwd
-        popen.action = self
-        self._popenlist.append(popen)
-        try:
-            self.report.logpopen(popen, cmd_args_shell)
-            try:
-                if resultjson and not redirect:
-                    if popen.stderr is not None:
-                        # prevent deadlock
-                        raise ValueError("stderr must not be piped here")
-                    # we read binary from the process and must write using a
-                    # binary stream
-                    buf = getattr(sys.stdout, "buffer", sys.stdout)
-                    out = None
-                    last_time = time.time()
-                    while 1:
-                        # we have to read one byte at a time, otherwise there
-                        # might be no output for a long time with slow tests
-                        data = fin.read(1)
-                        if data:
-                            buf.write(data)
-                            if b"\n" in data or (time.time() - last_time) > 1:
-                                # we flush on newlines or after 1 second to
-                                # provide quick enough feedback to the user
-                                # when printing a dot per test
-                                buf.flush()
-                                last_time = time.time()
-                        elif popen.poll() is not None:
-                            if popen.stdout is not None:
-                                popen.stdout.close()
-                            break
-                        else:
-                            time.sleep(0.1)
-                            # the seek updates internal read buffers
-                            fin.seek(0, 1)
-                    fin.close()
-                else:
-                    out, err = popen.communicate()
-            except KeyboardInterrupt:
-                self.report.keyboard_interrupt()
-                popen.wait()
-                raise
-            ret = popen.wait()
-        finally:
-            self._popenlist.remove(popen)
-        if ret and not ignore_ret:
-            invoked = " ".join(map(str, popen.args))
-            if outpath:
-                self.report.error(
-                    "invocation failed (exit code {:d}), logfile: {}".format(ret, outpath)
-                )
-                out = outpath.read()
-                self.report.error(out)
-                if hasattr(self, "commandlog"):
-                    self.commandlog.add_command(popen.args, out, ret)
-                raise tox.exception.InvocationError("{} (see {})".format(invoked, outpath), ret)
-            else:
-                raise tox.exception.InvocationError("{!r}".format(invoked), ret)
-        if not out and outpath:
-            out = outpath.read()
-        if hasattr(self, "commandlog"):
-            self.commandlog.add_command(popen.args, out, ret)
-        return out
-
-    def _rewriteargs(self, cwd, args):
-        newargs = []
-        for arg in args:
-            if not tox.INFO.IS_WIN and isinstance(arg, py.path.local):
-                arg = cwd.bestrelpath(arg)
-            newargs.append(str(arg))
-        # subprocess does not always take kindly to .py scripts so adding the interpreter here
-        if tox.INFO.IS_WIN:
-            ext = os.path.splitext(str(newargs[0]))[1].lower()
-            if ext == ".py" and self.venv:
-                newargs = [str(self.venv.envconfig.envpython)] + newargs
-        return newargs
-
-    def _popen(self, args, cwd, stdout, stderr, env=None):
-        if env is None:
-            env = os.environ.copy()
-        return self.session.popen(
-            self._rewriteargs(cwd, args),
-            shell=False,
-            cwd=str(cwd),
-            universal_newlines=True,
-            stdout=stdout,
-            stderr=stderr,
-            env=env,
-        )
-
-
-class Verbosity(object):
-    DEBUG = 2
-    INFO = 1
-    DEFAULT = 0
-    QUIET = -1
-    EXTRA_QUIET = -2
-
-
-class Reporter(object):
-    actionchar = "-"
-
-    def __init__(self, session):
-        self.tw = py.io.TerminalWriter()
-        self.session = session
-        self.reported_lines = []
-
-    @property
-    def verbosity(self):
-        if self.session:
-            return (
-                self.session.config.option.verbose_level - self.session.config.option.quiet_level
-            )
-        else:
-            return Verbosity.DEBUG
-
-    def logpopen(self, popen, cmd_args_shell):
-        """ log information about the action.popen() created process. """
-        if popen.outpath:
-            self.verbosity1("  {}$ {} >{}".format(popen.cwd, cmd_args_shell, popen.outpath))
-        else:
-            self.verbosity1("  {}$ {} ".format(popen.cwd, cmd_args_shell))
-
-    def logaction_start(self, action):
-        msg = "{} {}".format(action.msg, " ".join(map(str, action.args)))
-        self.verbosity2("{} start: {}".format(action.venvname, msg), bold=True)
-        assert not hasattr(action, "_starttime")
-        action._starttime = time.time()
-
-    def logaction_finish(self, action):
-        duration = time.time() - action._starttime
-        self.verbosity2(
-            "{} finish: {} after {:.2f} seconds".format(action.venvname, action.msg, duration),
-            bold=True,
-        )
-        delattr(action, "_starttime")
-
-    def startsummary(self):
-        if self.verbosity >= Verbosity.QUIET:
-            self.tw.sep("_", "summary")
-
-    def logline_if(self, level, msg, key=None, **kwargs):
-        if self.verbosity >= level:
-            message = str(msg) if key is None else "{}{}".format(key, msg)
-            self.logline(message, **kwargs)
-
-    def logline(self, msg, **opts):
-        self.reported_lines.append(msg)
-        self.tw.line("{}".format(msg), **opts)
-
-    def keyboard_interrupt(self):
-        self.error("KEYBOARDINTERRUPT")
-
-    def keyvalue(self, name, value):
-        if name.endswith(":"):
-            name += " "
-        self.tw.write(name, bold=True)
-        self.tw.write(value)
-        self.tw.line()
-
-    def line(self, msg, **opts):
-        self.logline(msg, **opts)
-
-    def info(self, msg):
-        self.logline_if(Verbosity.DEBUG, msg)
-
-    def using(self, msg):
-        self.logline_if(Verbosity.INFO, msg, "using ", bold=True)
-
-    def good(self, msg):
-        self.logline_if(Verbosity.QUIET, msg, green=True)
-
-    def warning(self, msg):
-        self.logline_if(Verbosity.QUIET, msg, "WARNING: ", red=True)
-
-    def error(self, msg):
-        self.logline_if(Verbosity.QUIET, msg, "ERROR: ", red=True)
-
-    def skip(self, msg):
-        self.logline_if(Verbosity.QUIET, msg, "SKIPPED: ", yellow=True)
-
-    def verbosity0(self, msg, **opts):
-        self.logline_if(Verbosity.DEFAULT, msg, **opts)
-
-    def verbosity1(self, msg, **opts):
-        self.logline_if(Verbosity.INFO, msg, **opts)
-
-    def verbosity2(self, msg, **opts):
-        self.logline_if(Verbosity.DEBUG, msg, **opts)
+from ..result import ResultLog
+from ..venv import VirtualEnv
 
 
 class Session:
@@ -396,7 +48,7 @@ class Session:
             self.venvlist = [self.getvenv(x) for x in self.evaluated_env_list()]
         except LookupError:
             raise SystemExit(1)
-        except tox.exception.ConfigError as e:
+        except ConfigError as e:
             self.report.error(str(e))
             raise SystemExit(1)
         self._actions = []
@@ -426,7 +78,7 @@ class Session:
             self.report.error(
                 "venv {!r} in {} would delete project".format(name, envconfig.envdir)
             )
-            raise tox.exception.ConfigError("envdir must not equal toxinidir")
+            raise ConfigError("envdir must not equal toxinidir")
         venv = VirtualEnv(envconfig=envconfig, session=self)
         self._name2venv[name] = venv
         return venv
@@ -444,6 +96,8 @@ class Session:
         return action
 
     def runcommand(self):
+        import tox
+
         self.report.using("tox-{} from {}".format(tox.__version__, tox.__file__))
         verbosity = self.report.verbosity > Verbosity.DEFAULT
         if self.config.option.showconfig:
@@ -513,13 +167,13 @@ class Session:
                     "Error creating virtualenv. Note that spaces in paths are "
                     "not supported by virtualenv. Error details: {!r}".format(e)
                 )
-            except tox.exception.InvocationError as e:
+            except InvocationError as e:
                 status = (
                     "Error creating virtualenv. Note that some special characters (e.g. ':' and "
                     "unicode symbols) in paths are not supported by virtualenv. Error details: "
                     "{!r}".format(e)
                 )
-            except tox.exception.InterpreterNotFound as e:
+            except InterpreterNotFound as e:
                 status = e
                 if self.config.option.skip_missing_interpreters == "true":
                     default_ret_code = 0
@@ -547,7 +201,7 @@ class Session:
             try:
                 venv.developpkg(setupdir, action)
                 return True
-            except tox.exception.InvocationError as exception:
+            except InvocationError as exception:
                 venv.status = exception
                 return False
 
@@ -564,7 +218,7 @@ class Session:
             try:
                 venv.installpkg(path, action)
                 return True
-            except tox.exception.InvocationError as exception:
+            except InvocationError as exception:
                 venv.status = exception
                 return False
 
@@ -623,7 +277,7 @@ class Session:
         retcode = 0
         for venv in self.venvlist:
             status = venv.status
-            if isinstance(status, tox.exception.InterpreterNotFound):
+            if isinstance(status, InterpreterNotFound):
                 msg = " {}: {}".format(venv.envconfig.envname, str(status))
                 if self.config.option.skip_missing_interpreters == "true":
                     self.report.skip(msg)
@@ -697,7 +351,7 @@ class Session:
                 report_env(e)
 
     def info_versions(self):
-        versions = ["tox-{}".format(tox.__version__)]
+        versions = ["tox-{}".format(__version__)]
         proc = subprocess.Popen(
             (sys.executable, "-m", "virtualenv", "--version"), stdout=subprocess.PIPE
         )
@@ -719,11 +373,11 @@ class Session:
         if p.check():
             return p
         if not p.dirpath().check(dir=1):
-            raise tox.exception.MissingDirectory(p.dirpath())
+            raise MissingDirectory(p.dirpath())
         self.report.info("determining {}".format(p))
         candidates = p.dirpath().listdir(p.basename)
         if len(candidates) == 0:
-            raise tox.exception.MissingDependency(package_spec)
+            raise MissingDependency(package_spec)
         if len(candidates) > 1:
             version_package = []
             for filename in candidates:
@@ -733,7 +387,7 @@ class Session:
                 else:
                     self.report.warning("could not determine version of: {}".format(str(filename)))
             if not version_package:
-                raise tox.exception.MissingDependency(package_spec)
+                raise MissingDependency(package_spec)
             version_package.sort()
             _, package_with_largest_version = version_package[-1]
             return package_with_largest_version

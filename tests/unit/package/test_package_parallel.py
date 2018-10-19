@@ -3,6 +3,8 @@ from functools import partial
 
 import py
 
+from tox.commands import Session
+
 
 def test_tox_parallel_build_safe(initproj, cmd, mock_venv, monkeypatch):
     initproj(
@@ -47,7 +49,7 @@ def test_tox_parallel_build_safe(initproj, cmd, mock_venv, monkeypatch):
 
         def build_package(config, report, session):
             t1_build_started.set()
-            prev_run_test_env = tox.session.Session.runtestenv
+            prev_run_test_env = Session.runtestenv
 
             def run_test_env(self, venv, redirect=False):
                 t2_build_finished.wait()

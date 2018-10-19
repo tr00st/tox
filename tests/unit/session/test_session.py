@@ -6,8 +6,8 @@ from threading import Thread
 
 import pytest
 
-import tox
-from tox.exception import MissingDependency, MissingDirectory
+from tox import commands
+from tox.exception import InvocationError, MissingDependency, MissingDirectory
 
 
 def test__resolve_pkg_missing_directory(tmpdir, mocksession):
@@ -227,7 +227,7 @@ def popen_env_test(initproj, cmd, monkeypatch):
              """
 
             def run(self):
-                prev_build = tox.session.build_session
+                prev_build = commands.build_session
 
                 def build_session(config):
                     res.session = prev_build(config)
@@ -235,7 +235,7 @@ def popen_env_test(initproj, cmd, monkeypatch):
                     monkeypatch.setattr(res.session, "popen", popen)
                     return res.session
 
-                monkeypatch.setattr(tox.session, "build_session", build_session)
+                monkeypatch.setattr(commands, "build_session", build_session)
 
                 def popen(cmd, **kwargs):
                     activity_id = res.session._actions[-1].id
@@ -243,7 +243,7 @@ def popen_env_test(initproj, cmd, monkeypatch):
                     ret = "NOTSET"
                     try:
                         ret = res._popen(cmd, **kwargs)
-                    except tox.exception.InvocationError as exception:
+                    except InvocationError as exception:
                         ret = exception
                     finally:
                         res.popens.append(

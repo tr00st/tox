@@ -6,12 +6,15 @@ If objects are marked experimental they might change between minor versions.
 
 To override/modify tox behaviour via plugins see `tox.hookspec` and its use with pluggy.
 """
-import pluggy
+
 
 from . import exception
 from .constants import INFO, PIP, PYTHON
 from .hookspecs import hookspec
+from .hook_impl import hookimpl
 from .version import __version__
+from .commands import cmdline
+
 
 __all__ = (
     "__version__",  # tox version
@@ -25,8 +28,3 @@ __all__ = (
     # DEPRECATED - will be removed from API in tox 4
     "hookspec",
 )
-
-hookimpl = pluggy.HookimplMarker("tox")
-
-# NOTE: must come last due to circular import
-from .session import cmdline  # noqa

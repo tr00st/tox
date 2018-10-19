@@ -4,7 +4,6 @@
 *.swp
 __pycache__
 
-
 # packaging folders
 /src/tox/version.py
 /build/

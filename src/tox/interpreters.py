@@ -128,7 +128,7 @@ class NoInterpreterInfo:
 
 if not tox.INFO.IS_WIN:
 
-    @tox.hookimpl
+    @tox.hook_impl.hookimpl
     def tox_get_python_executable(envconfig):
         if envconfig.basepython == "python{}.{}".format(*sys.version_info[0:2]):
             return sys.executable

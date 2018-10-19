@@ -37,17 +37,14 @@ default_factors = tox.PYTHON.DEFAULT_FACTORS
 
 def get_plugin_manager(plugins=()):
     # initialize plugin manager
-    import tox.venv
+    from tox import venv, package, interpreters, config
 
     pm = pluggy.PluginManager("tox")
     pm.add_hookspecs(tox.hookspecs)
-    pm.register(tox.config)
-    pm.register(tox.interpreters)
-    pm.register(tox.venv)
-    pm.register(tox.session)
-    from tox import package
 
-    pm.register(package)
+    for module in (interpreters, venv, package, config):
+        pm.register(module)
+
     pm.load_setuptools_entrypoints("tox")
     for plugin in plugins:
         pm.register(plugin)

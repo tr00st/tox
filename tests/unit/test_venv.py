@@ -5,6 +5,7 @@ import py
 import pytest
 
 import tox
+from tox.action import Action
 from tox.interpreters import NoInterpreterInfo
 from tox.venv import (
     CreationConfig,
@@ -834,13 +835,13 @@ def test_tox_testenv_create(newmocksession):
     class Plugin:
         @tox.hookimpl
         def tox_testenv_create(self, action, venv):
-            assert isinstance(action, tox.session.Action)
+            assert isinstance(action, Action)
             assert isinstance(venv, VirtualEnv)
             log.append(1)
 
         @tox.hookimpl
         def tox_testenv_install_deps(self, action, venv):
-            assert isinstance(action, tox.session.Action)
+            assert isinstance(action, Action)
             assert isinstance(venv, VirtualEnv)
             log.append(2)
 

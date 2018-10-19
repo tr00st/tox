@@ -1,8 +1,8 @@
 import os
 
+from tox.commands.core import Session
 from tox.config import parseconfig
 from tox.package import get_package
-from tox.session import Session
 
 
 def test_make_sdist_distshare(tmpdir, initproj):

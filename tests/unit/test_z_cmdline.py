@@ -10,8 +10,8 @@ import pytest
 
 import tox
 from tox._pytestplugin import ReportExpectMock
+from tox.commands.core import Session
 from tox.config import parseconfig
-from tox.session import Session
 
 pytest_plugins = "pytester"
 

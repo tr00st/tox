@@ -1,8 +1,8 @@
 import re
 
+from tox.commands.core import Session
 from tox.config import parseconfig
 from tox.package import get_package
-from tox.session import Session
 
 
 def test_install_via_installpkg(mock_venv, initproj, cmd):

@@ -4,7 +4,7 @@ import py
 import pytest
 
 from tox.package.builder.isolated import get_build_info
-from tox.session import Reporter
+from tox.reporter import Reporter
 
 
 def test_verbose_isolated_build(initproj, mock_venv, cmd):

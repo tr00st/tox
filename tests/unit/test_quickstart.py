@@ -3,7 +3,7 @@ import os
 import pytest
 
 import tox
-from tox._quickstart import (
+from tox.commands.quickstart import (
     ALTERNATIVE_CONFIG_NAME,
     QUICKSTART_CONF,
     list_modificator,

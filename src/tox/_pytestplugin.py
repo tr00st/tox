@@ -13,9 +13,10 @@ import six
 
 import tox
 from tox import venv
+from tox.commands import Session, main
 from tox.config import parseconfig
+from tox.reporter import Reporter
 from tox.result import ResultLog
-from tox.session import Reporter, Session, main
 from tox.venv import CreationConfig, VirtualEnv, getdigest
 
 mark_dont_run_on_windows = pytest.mark.skipif(os.name == "nt", reason="non windows test")
@@ -484,14 +485,16 @@ def mock_venv(monkeypatch):
     monkeypatch.setattr(venv, "tox_runenvreport", tox_runenvreport)
 
     # intercept the build session to save it and we intercept the popen invocations
-    prev_build = tox.session.build_session
+    from tox import commands
+
+    prev_build = commands.build_session
 
     def build_session(config):
         session = prev_build(config)
         res[id(session)] = Result(session)
         return session
 
-    monkeypatch.setattr(tox.session, "build_session", build_session)
+    monkeypatch.setattr(commands, "build_session", build_session)
     return res
 
 
