@@ -161,13 +161,16 @@ else:
                 return actual
         # Use py.exe to determine location - PEP-514 & PEP-397
         if m:
-            return locate_via_py(*groups)
+            archMatch = re.match(r"python(\d)(\.(\d))?(?P<arch>-(32|64))?", envconfig.basepython)
+            arch = archMatch.group('arch')
+            return locate_via_py(*groups, arch=arch)
 
     # Exceptions to the usual windows mapping
     win32map = {"python": sys.executable, "jython": r"c:\jython2.5.1\jython.bat"}
 
-    def locate_via_py(*parts):
-        ver = "-{}".format(".".join(parts))
+    def locate_via_py(*parts, arch=None):
+       
+        ver = "-{}{}".format(".".join(parts),(arch if arch is not None else ""))
         script = "import sys; print(sys.executable)"
         py_exe = distutils.spawn.find_executable("py")
         if py_exe:
